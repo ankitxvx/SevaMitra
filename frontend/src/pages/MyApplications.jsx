@@ -4,6 +4,7 @@ import axios from 'axios';
 import { FileText, CheckCircle2, Clock, Eye, ArrowRight, PlusCircle, AlertCircle, Shield } from 'lucide-react';
 
 import { API_URL } from '../config';
+import { getAllLocalApplications } from '../utils/storage';
 
 export function MyApplications() {
   const navigate = useNavigate();
@@ -16,11 +17,18 @@ export function MyApplications() {
 
   const fetchApplications = async () => {
     try {
-      const res = await axios.get(`${API_URL}/applications`);
-      setApplications(res.data);
+      const res = await axios.get(`${API_URL}/applications`, { timeout: 3000 });
+      if (res.data && res.data.length > 0) {
+        setApplications(res.data);
+      } else {
+        const local = getAllLocalApplications();
+        setApplications(local);
+      }
       setLoading(false);
     } catch (err) {
-      console.error("Error fetching applications:", err);
+      console.warn("Backend unavailable. Reading local applications:", err.message);
+      const local = getAllLocalApplications();
+      setApplications(local);
       setLoading(false);
     }
   };

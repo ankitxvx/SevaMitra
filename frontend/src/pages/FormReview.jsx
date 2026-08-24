@@ -4,6 +4,7 @@ import axios from 'axios';
 import { FileText, CheckCircle2, Edit3, ArrowRight, Printer, ShieldCheck, ArrowLeft, Save, X } from 'lucide-react';
 
 import { API_URL } from '../config';
+import { getLocalSession, saveLocalSession } from '../utils/storage';
 
 export function FormReview() {
   const { sessionId } = useParams();
@@ -23,11 +24,13 @@ export function FormReview() {
 
   const fetchSessionData = async () => {
     try {
-      const res = await axios.get(`${API_URL}/session/${sessionId}`);
+      const res = await axios.get(`${API_URL}/session/${sessionId}`, { timeout: 3000 });
       setFormData(res.data);
       setLoading(false);
     } catch (err) {
-      console.error("Error fetching form details:", err);
+      console.warn("Backend unavailable. Reading local session data:", err.message);
+      const local = getLocalSession(sessionId);
+      setFormData(local);
       setLoading(false);
     }
   };
@@ -48,22 +51,29 @@ export function FormReview() {
         session_id: sessionId,
         question: question,
         new_value: editValue
-      });
-      
-      setFormData(prev => ({
-        ...prev,
-        responses: {
-          ...prev.responses,
-          [question]: editValue
-        }
-      }));
-      setEditingKey(null);
-      setSaveSuccess(true);
-      setTimeout(() => setSaveSuccess(false), 2000);
+      }, { timeout: 3000 });
     } catch (err) {
-      console.error(err);
-      alert("Failed to update field.");
+      console.warn("Backend update failed, saving locally:", err.message);
     }
+    
+    const updatedResponses = {
+      ...(formData?.responses || {}),
+      [question]: editValue
+    };
+
+    setFormData(prev => ({
+      ...prev,
+      responses: updatedResponses
+    }));
+
+    saveLocalSession(sessionId, {
+      ...formData,
+      responses: updatedResponses
+    });
+
+    setEditingKey(null);
+    setSaveSuccess(true);
+    setTimeout(() => setSaveSuccess(false), 2000);
   };
 
   if (loading) {

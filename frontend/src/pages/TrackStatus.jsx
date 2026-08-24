@@ -4,6 +4,7 @@ import axios from 'axios';
 import { Search, MapPin, CheckCircle2, Clock, Calendar, FileText } from 'lucide-react';
 
 import { API_URL } from '../config';
+import { getAllLocalApplications } from '../utils/storage';
 
 export function TrackStatus() {
   const { trackingId: initialTrackingId } = useParams();
@@ -20,11 +21,21 @@ export function TrackStatus() {
     setError('');
     setStatusData(null);
     try {
-      const res = await axios.get(`${API_URL}/track-status/${tid}`);
+      const res = await axios.get(`${API_URL}/track-status/${tid}`, { timeout: 3000 });
       setStatusData(res.data);
     } catch (err) {
-      console.error(err);
-      setError('Tracking ID not found. Please double-check and try again.');
+      console.warn("Backend tracking search failed, checking local sessions:", err.message);
+      const all = getAllLocalApplications();
+      const match = all.find(a => a.tracking_id === tid || a.session_id === tid);
+      if (match) {
+        setStatusData({
+          form_name: match.form_name,
+          status: match.status || 'completed',
+          submitted_at: new Date().toISOString().split('T')[0]
+        });
+      } else {
+        setError('Tracking ID not found. Please double-check and try again.');
+      }
     } finally {
       setLoading(false);
     }
