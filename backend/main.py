@@ -8,7 +8,7 @@ import uuid
 import json
 
 from backend.db import get_db, FormSession, PaymentMock, Document
-from backend.ai_service import speech_to_english, generate_questions, ask_llama
+from backend.ai_service import speech_to_text, generate_questions, ask_llama
 
 from pydantic import BaseModel
 
@@ -17,11 +17,13 @@ app = FastAPI(title="SevaMitraAI Backend")
 class FormSelectionRequest(BaseModel):
     session_id: str
     form_name: str
+    language: Optional[str] = None
 
 class ProcessTextRequest(BaseModel):
     session_id: str
     text: str
     question_index: Optional[int] = None
+    language: Optional[str] = None
 
 class LoginRequest(BaseModel):
     phone: str
@@ -118,35 +120,43 @@ async def process_audio(
     session_id: str = Form(...),
     step: str = Form(...), # 'form_selection', 'answer_question'
     question_index: Optional[int] = Form(None),
-    audio: UploadFile = File(...),
+    language: Optional[str] = Form(None),
+    spoken_text: Optional[str] = Form(None),
+    audio: Optional[UploadFile] = File(None),
     db: Session = Depends(get_db)
 ):
     session = db.query(FormSession).filter(FormSession.session_id == session_id).first()
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    temp_audio_path = f"uploads/{uuid.uuid4()}.wav"
-    with open(temp_audio_path, "wb") as buffer:
-        shutil.copyfileobj(audio.file, buffer)
+    transcribed_text = ""
+    if audio is not None and audio.filename:
+        temp_audio_path = f"uploads/{uuid.uuid4()}.wav"
+        with open(temp_audio_path, "wb") as buffer:
+            shutil.copyfileobj(audio.file, buffer)
 
-    try:
-        translated_text = speech_to_english(temp_audio_path)
-    finally:
-        if os.path.exists(temp_audio_path):
-            os.remove(temp_audio_path)
+        try:
+            transcribed_text = speech_to_text(temp_audio_path, language=language)
+        finally:
+            if os.path.exists(temp_audio_path):
+                os.remove(temp_audio_path)
 
-    if not translated_text:
+    # Use browser speech recognition text if whisper is empty
+    if not transcribed_text and spoken_text:
+        transcribed_text = spoken_text.strip()
+
+    if not transcribed_text:
         return {"error": "Could not understand audio. Please try again."}
 
     if step == "form_selection":
-        form_name = translated_text
-        questions = generate_questions(form_name)
+        form_name = transcribed_text
+        questions = generate_questions(form_name, language=language)
         
         session.form_name = form_name
         session.questions = questions
         session.responses = {}
         db.commit()
-        return {"form_name": form_name, "questions": questions, "translated_text": translated_text}
+        return {"form_name": form_name, "questions": questions, "translated_text": transcribed_text}
     
     elif step == "answer_question":
         if question_index is None or not session.questions or question_index >= len(session.questions):
@@ -154,7 +164,7 @@ async def process_audio(
         
         question = session.questions[question_index]
         responses = session.responses or {}
-        responses[question] = translated_text
+        responses[question] = transcribed_text
         session.responses = responses
         
         # Check if all questions are answered
@@ -165,7 +175,7 @@ async def process_audio(
             db.add(mock_payment)
             
         db.commit()
-        return {"question": question, "answer": translated_text, "status": session.status}
+        return {"question": question, "answer": transcribed_text, "status": session.status}
 
 @app.post("/api/select-form")
 async def select_form(
@@ -176,7 +186,7 @@ async def select_form(
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
         
-    questions = generate_questions(request.form_name)
+    questions = generate_questions(request.form_name, language=request.language)
     session.form_name = request.form_name
     session.questions = questions
     session.responses = {}
@@ -194,7 +204,7 @@ async def process_text(
 
     if not session.form_name:
         form_name = request.text
-        questions = generate_questions(form_name)
+        questions = generate_questions(form_name, language=request.language)
         session.form_name = form_name
         session.questions = questions
         session.responses = {}
